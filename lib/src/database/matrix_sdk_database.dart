@@ -804,9 +804,9 @@ class MatrixSdkDatabase extends DatabaseApi with DatabaseFileStorage {
         client,
       );
     }
-    legacyUserDeviceKeysBox.clear();
-    legacyUserCrossSigningKeysBox.clear();
-    legacyUserDeviceKeysOutdatedBox.clear();
+    await legacyUserDeviceKeysBox.clear();
+    await legacyUserCrossSigningKeysBox.clear();
+    await legacyUserDeviceKeysOutdatedBox.clear();
     return res;
   }
 
