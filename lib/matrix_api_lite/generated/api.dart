@@ -20,6 +20,49 @@ import 'package:http/http.dart';
 import 'dart:convert';
 import 'dart:typed_data';
 
+/// A [BaseRequest] that streams a fixed byte body in chunks and reports how
+/// many bytes have been handed to the HTTP client. For the dart:io based client
+/// this tracks the bytes written to the socket closely enough to drive an
+/// upload progress indicator. Used by [Api.uploadContent] when an `onProgress`
+/// callback is supplied. Without a callback the plain [Request] path is kept
+/// unchanged.
+class ProgressUploadRequest extends BaseRequest {
+  final Uint8List bodyBytes;
+  final void Function(int sent, int total)? onProgress;
+  static const int _chunkSize = 64 * 1024;
+
+  ProgressUploadRequest(
+    super.method,
+    super.url,
+    this.bodyBytes, {
+    this.onProgress,
+  }) {
+    contentLength = bodyBytes.length;
+  }
+
+  @override
+  ByteStream finalize() {
+    super.finalize();
+    final total = bodyBytes.length;
+    final callback = onProgress;
+    // Emit an immediate 0/total so the UI line can appear right away.
+    callback?.call(0, total);
+    Stream<List<int>> generate() async* {
+      var sent = 0;
+      for (var offset = 0; offset < total; offset += _chunkSize) {
+        final end = offset + _chunkSize < total ? offset + _chunkSize : total;
+        // sublistView avoids copying the (potentially large) body per chunk.
+        final chunk = Uint8List.sublistView(bodyBytes, offset, end);
+        yield chunk;
+        sent = end;
+        callback?.call(sent, total);
+      }
+    }
+
+    return ByteStream(generate());
+  }
+}
+
 class Api {
   Client httpClient;
   Uri? baseUri;
@@ -6309,15 +6352,26 @@ class Api {
     Uint8List body, {
     String? filename,
     String? contentType,
+    void Function(int sent, int total)? onProgress,
   }) async {
     final requestUri = Uri(
       path: '_matrix/media/v3/upload',
       queryParameters: {if (filename != null) 'filename': filename},
     );
-    final request = Request('POST', baseUri!.resolveUri(requestUri));
+    final BaseRequest request;
+    if (onProgress != null) {
+      request = ProgressUploadRequest(
+        'POST',
+        baseUri!.resolveUri(requestUri),
+        body,
+        onProgress: onProgress,
+      );
+    } else {
+      request = Request('POST', baseUri!.resolveUri(requestUri))
+        ..bodyBytes = body;
+    }
     request.headers['authorization'] = 'Bearer ${bearerToken!}';
     if (contentType != null) request.headers['content-type'] = contentType;
-    request.bodyBytes = body;
     final response = await httpClient.send(request);
     final responseBody = await response.stream.toBytes();
     if (response.statusCode != 200) unexpectedResponse(response, responseBody);

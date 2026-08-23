@@ -23,7 +23,15 @@ class EncryptedFile {
   String sha256;
 }
 
-Future<EncryptedFile> encryptFile(Uint8List input) async {
+/// Convenience wrapper. Prefer [NativeImplementations] /
+/// [Client.nativeImplementations] (via [MatrixFile.encrypt]) so the heavy
+/// AES-CTR + SHA256 work can run off the main isolate.
+Future<EncryptedFile> encryptFile(Uint8List input) =>
+    encryptFileImplementation(input);
+
+/// you would likely want to use [NativeImplementations] and
+/// [Client.nativeImplementations] instead
+Future<EncryptedFile> encryptFileImplementation(Uint8List input) async {
   final key = secureRandomBytes(32);
   final iv = secureRandomBytes(16);
   final data = CryptoUtils.aesCtr(input: input, key: key, iv: iv);

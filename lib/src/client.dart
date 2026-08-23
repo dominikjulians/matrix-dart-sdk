@@ -1608,6 +1608,11 @@ class Client extends MatrixApi {
     Uint8List file, {
     String? filename,
     String? contentType,
+
+    /// Reports the number of bytes handed to the server as the upload
+    /// progresses, together with the total. Enables live byte-progress for
+    /// large uploads without blocking the UI.
+    void Function(int sent, int total)? onProgress,
   }) async {
     final mediaConfig = await getConfig();
     final maxMediaSize = mediaConfig.mUploadSize;
@@ -1620,6 +1625,7 @@ class Client extends MatrixApi {
       file,
       filename: filename,
       contentType: contentType,
+      onProgress: onProgress,
     );
 
     final database = this.database;

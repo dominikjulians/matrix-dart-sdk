@@ -48,6 +48,21 @@ abstract class NativeImplementations {
     bool retryInDummy = true,
   });
 
+  /// Encrypts a file (AES-CTR + SHA256) for end-to-end encrypted uploads.
+  ///
+  /// The default implementation runs on the current isolate, which will freeze
+  /// the UI for large files. [NativeImplementationsIsolate] overrides this to
+  /// run the work in a background isolate. Kept concrete (not abstract) so
+  /// existing subclasses — including the web worker — keep working with the
+  /// synchronous fallback until they choose to override it.
+  FutureOr<EncryptedFile> encryptFile(
+    Uint8List bytes, {
+    bool retryInDummy = true,
+  }) {
+    // ignore: discarded_futures
+    return encryptFileImplementation(bytes);
+  }
+
   FutureOr<MatrixImageFileResizedResponse?> shrinkImage(
     MatrixImageFileResizeArguments args, {
     bool retryInDummy = false,
@@ -223,6 +238,19 @@ class NativeImplementationsIsolate extends NativeImplementations {
       await vodozemacInit?.call();
       return NativeImplementations.dummy.decryptFile(args);
     }, file);
+  }
+
+  @override
+  Future<EncryptedFile> encryptFile(
+    Uint8List bytes, {
+    bool retryInDummy = true,
+  }) {
+    return runInBackground<EncryptedFile, Uint8List>((Uint8List args) async {
+      // vodozemac provides CryptoUtils (AES-CTR + SHA256) and must be
+      // initialized inside every isolate before it can be used.
+      await vodozemacInit?.call();
+      return encryptFileImplementation(args);
+    }, bytes);
   }
 
   @override

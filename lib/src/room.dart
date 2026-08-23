@@ -836,6 +836,11 @@ class Room {
     /// the sync event. Using this can display a different sort order of events
     /// as the sync event does replace but not relocate the pending event.
     bool displayPendingEvent = true,
+
+    /// Live byte progress of the (main) file upload: `(sent, total)`. Combined
+    /// with a caller-supplied [txid] this lets the UI show a per-message upload
+    /// progress line. The thumbnail upload is not reported (it is tiny).
+    void Function(int sent, int total)? onProgress,
   }) async {
     txid ??= client.generateUniqueTransactionId();
     await client.database.storeFile(
@@ -1031,11 +1036,17 @@ class Room {
               .unsigned![fileSendingStatusKey] =
           FileSendingStatus.encrypting.name;
       await _handleFakeSync(syncUpdate);
-      encryptedFile = await file.encrypt();
+      // Encrypt in a background isolate (via nativeImplementations) so large
+      // files do not freeze the UI.
+      encryptedFile = await file.encrypt(
+        nativeImplementations: client.nativeImplementations,
+      );
       uploadFile = encryptedFile.toMatrixFile();
 
       if (thumbnail != null) {
-        encryptedThumbnail = await thumbnail.encrypt();
+        encryptedThumbnail = await thumbnail.encrypt(
+          nativeImplementations: client.nativeImplementations,
+        );
         uploadThumbnail = encryptedThumbnail.toMatrixFile();
       }
     }
@@ -1060,6 +1071,7 @@ class Room {
           uploadFile.bytes,
           filename: uploadFile.name,
           contentType: uploadFile.mimeType,
+          onProgress: onProgress,
         );
         thumbnailUploadResp = uploadThumbnail != null
             ? await client.uploadContent(

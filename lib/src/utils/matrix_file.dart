@@ -21,7 +21,16 @@ class MatrixFile {
 
   /// Encrypts this file and returns the
   /// encryption information as an [EncryptedFile].
-  Future<EncryptedFile> encrypt() async {
+  ///
+  /// Pass [nativeImplementations] (e.g. `Client.nativeImplementations`) to run
+  /// the heavy AES-CTR + SHA256 work in a background isolate so the UI does not
+  /// freeze on large files. Without it the work runs on the current isolate.
+  Future<EncryptedFile> encrypt({
+    NativeImplementations? nativeImplementations,
+  }) async {
+    if (nativeImplementations != null) {
+      return await nativeImplementations.encryptFile(bytes);
+    }
     return await encryptFile(bytes);
   }
 
