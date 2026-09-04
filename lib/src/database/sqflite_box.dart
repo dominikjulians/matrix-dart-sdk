@@ -12,7 +12,10 @@ import 'zone_transaction_mixin.dart';
 /// Key-Value store abstraction over Sqflite so that the sdk database can use
 /// a single interface for all platforms. API is inspired by Hive.
 class BoxCollection with ZoneTransactionMixin {
-  final Database _db;
+  // 04.09.2026 (Agent Ecosystem, iOS 0xdead10cc): nicht mehr final, damit die
+  // Datenbank fuer den Hintergrund geschlossen und beim Zurueckkehren durch
+  // eine frisch geoeffnete Verbindung ersetzt werden kann (schlafen/aufwachen).
+  Database _db;
   final Set<String> boxNames;
   final String name;
 
@@ -68,6 +71,21 @@ class BoxCollection with ZoneTransactionMixin {
   });
 
   Future<void> close() => zoneTransaction(_db.close);
+
+  /// Schliesst die SQLite-Verbindung fuer den Hintergrund (iOS: eine offene
+  /// Verbindung auf eine Datei im geteilten App-Group-Container haelt beim
+  /// Einfrieren eine Sperre, iOS beendet die App dann mit 0xdead10cc).
+  /// Laufende Transaktionen werden abgewartet. Danach sind alle Zugriffe bis
+  /// [aufwachen] Fehler — der Aufrufer sorgt dafuer, dass nichts mehr laeuft.
+  Future<void> schlafen() => zoneTransaction(_db.close);
+
+  /// Setzt eine neu geoeffnete Verbindung auf dieselbe Datei ein. Die Boxen
+  /// bleiben gueltig, sie greifen ueber diese Collection auf [_db] zu.
+  void aufwachen(Database db) {
+    _db = db;
+  }
+
+  bool get istOffen => _db.isOpen;
 
   @Deprecated('use collection.deleteDatabase now')
   static Future<void> delete(String path, [dynamic factory]) =>

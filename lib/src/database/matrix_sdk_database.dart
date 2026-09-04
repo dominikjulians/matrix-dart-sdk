@@ -363,6 +363,17 @@ class MatrixSdkDatabase extends DatabaseApi with DatabaseFileStorage {
   @override
   Future<void> close() async => _collection.close();
 
+  /// Hintergrund (04.09.2026, iOS 0xdead10cc): SQLite-Verbindung schliessen,
+  /// ohne den Client zu verwerfen. Gegenstueck: [hintergrundOeffnen].
+  Future<void> hintergrundSchliessen() => _collection.schlafen();
+
+  /// Frisch geoeffnete Verbindung (gleiche Datei, gleicher Schluessel) nach dem
+  /// Hintergrund einsetzen. Der Aufrufer oeffnet sie mit demselben Verfahren
+  /// wie beim Start (Factory, Cipher-Pragma).
+  void hintergrundOeffnen(Database db) => _collection.aufwachen(db);
+
+  bool get hintergrundGeschlossen => !_collection.istOffen;
+
   @override
   Future<void> deleteFromToDeviceQueue(int id) async {
     await _toDeviceQueueBox.delete(id.toString());
