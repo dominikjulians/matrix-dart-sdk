@@ -108,5 +108,43 @@ void main() {
         isWeb ? null : databaseFactoryFfi,
       );
     });
+
+    // 05.09.2026 (Agent Ecosystem): Wartetor — Zugriffe waehrend des Schlafens
+    // warten bis aufwachen(), statt mit database_closed zu scheitern.
+    test('schlafen: Zugriff wartet bis aufwachen', () async {
+      if (isWeb) return;
+      final box = collection.openBox<Map>('cats');
+      await box.put('fluffy', data);
+      await collection.schlafen();
+      expect(collection.schlaeft, isTrue);
+      expect(collection.istOffen, isFalse);
+      var fertig = false;
+      // getAllKeys geht immer an die Datenbank (get koennte aus dem Box-Cache kommen).
+      final wartend = box.getAllKeys().then((v) {
+        fertig = true;
+        return v;
+      });
+      await Future.delayed(const Duration(milliseconds: 50));
+      expect(fertig, isFalse, reason: 'darf nicht gegen die geschlossene DB laufen');
+      final neu = await databaseFactoryFfi.openDatabase(':memory:');
+      await BoxCollection.open('testbox', boxNames, sqfliteDatabase: neu,
+          sqfliteFactory: databaseFactoryFfi);
+      collection.aufwachen(neu);
+      await wartend;
+      expect(fertig, isTrue);
+      expect(collection.istOffen, isTrue);
+      await box.put('loki', data2);
+      expect(await box.get('loki'), data2);
+    });
+
+    test('close waehrend des Schlafens: Wartende bekommen einen Fehler', () async {
+      if (isWeb) return;
+      final box = collection.openBox<Map>('cats');
+      await collection.schlafen();
+      final wartend = box.getAllKeys();
+      final erwartung = expectLater(wartend, throwsA(isA<StateError>()));
+      await collection.close();
+      await erwartung;
+    });
   });
 }

@@ -16,6 +16,20 @@ class BoxCollection with ZoneTransactionMixin {
   // Datenbank fuer den Hintergrund geschlossen und beim Zurueckkehren durch
   // eine frisch geoeffnete Verbindung ersetzt werden kann (schlafen/aufwachen).
   Database _db;
+
+  // 05.09.2026 (Agent Ecosystem): Wartetor fuer den Hintergrund. Solange die
+  // Verbindung schlaeft, warten alle Zugriffe hier, statt gegen die
+  // geschlossene Datenbank zu laufen (DatabaseException database_closed in
+  // Room.getTimeline, gesehen in Bau 3693). [aufwachen] oeffnet das Tor,
+  // [close] laesst Wartende mit einem klaren Fehler los.
+  Completer<void>? _schlaf;
+
+  Future<Database> get _bereit async {
+    final tor = _schlaf;
+    if (tor != null) await tor.future;
+    return _db;
+  }
+
   final Set<String> boxNames;
   final String name;
 
@@ -57,7 +71,8 @@ class BoxCollection with ZoneTransactionMixin {
     List<String>? boxNames,
     bool readOnly = false,
   }) => zoneTransaction(() async {
-    final batch = _db.batch();
+    final db = await _bereit;
+    final batch = db.batch();
     _activeBatch = batch;
     await action();
     _activeBatch = null;
@@ -65,27 +80,45 @@ class BoxCollection with ZoneTransactionMixin {
   });
 
   Future<void> clear() => transaction(() async {
+    final db = await _bereit;
     for (final name in boxNames) {
-      await _db.delete(name);
+      await db.delete(name);
     }
   });
 
-  Future<void> close() => zoneTransaction(_db.close);
+  Future<void> close() => zoneTransaction(() async {
+    // Endgueltig zu: Wartende nicht ewig haengen lassen.
+    final tor = _schlaf;
+    if (tor != null && !tor.isCompleted) {
+      tor.completeError(StateError('Datenbank wurde geschlossen'));
+    }
+    _schlaf = null;
+    if (_db.isOpen) await _db.close();
+  });
 
   /// Schliesst die SQLite-Verbindung fuer den Hintergrund (iOS: eine offene
   /// Verbindung auf eine Datei im geteilten App-Group-Container haelt beim
   /// Einfrieren eine Sperre, iOS beendet die App dann mit 0xdead10cc).
   /// Laufende Transaktionen werden abgewartet. Danach sind alle Zugriffe bis
   /// [aufwachen] Fehler — der Aufrufer sorgt dafuer, dass nichts mehr laeuft.
-  Future<void> schlafen() => zoneTransaction(_db.close);
+  Future<void> schlafen() {
+    _schlaf ??= Completer<void>();
+    return zoneTransaction(_db.close);
+  }
 
   /// Setzt eine neu geoeffnete Verbindung auf dieselbe Datei ein. Die Boxen
   /// bleiben gueltig, sie greifen ueber diese Collection auf [_db] zu.
   void aufwachen(Database db) {
     _db = db;
+    final tor = _schlaf;
+    _schlaf = null;
+    if (tor != null && !tor.isCompleted) tor.complete();
   }
 
-  bool get istOffen => _db.isOpen;
+  bool get istOffen => _schlaf == null && _db.isOpen;
+
+  /// Fuer Tests: wartet gerade jemand am Tor?
+  bool get schlaeft => _schlaf != null;
 
   @Deprecated('use collection.deleteDatabase now')
   static Future<void> delete(String path, [dynamic factory]) =>
@@ -168,7 +201,7 @@ class Box<V> {
   Future<List<String>> getAllKeys([Transaction? txn]) async {
     if (_quickAccessCachedKeys != null) return _quickAccessCachedKeys!.toList();
 
-    final executor = txn ?? boxCollection._db;
+    final executor = txn ?? await boxCollection._bereit;
 
     final result = await executor.query(name, columns: ['k']);
     final keys = result.map((row) => row['k'] as String).toList();
@@ -178,7 +211,7 @@ class Box<V> {
   }
 
   Future<Map<String, V>> getAllValues([Transaction? txn]) async {
-    final executor = txn ?? boxCollection._db;
+    final executor = txn ?? await boxCollection._bereit;
 
     final result = await executor.query(name);
     return Map.fromEntries(
@@ -191,7 +224,7 @@ class Box<V> {
   Future<V?> get(String key, [Transaction? txn]) async {
     if (_quickAccessCache.containsKey(key)) return _quickAccessCache[key];
 
-    final executor = txn ?? boxCollection._db;
+    final executor = txn ?? await boxCollection._bereit;
 
     final result = await executor.query(
       name,
@@ -221,7 +254,7 @@ class Box<V> {
       ];
     }
 
-    final executor = txn ?? boxCollection._db;
+    final executor = txn ?? await boxCollection._bereit;
 
     final list = <V?>[];
 
@@ -249,7 +282,7 @@ class Box<V> {
 
     final params = {'k': key, 'v': _toString(val)};
     if (txn == null) {
-      await boxCollection._db.insert(
+      await (await boxCollection._bereit).insert(
         name,
         params,
         conflictAlgorithm: ConflictAlgorithm.replace,
@@ -267,7 +300,7 @@ class Box<V> {
     txn ??= boxCollection._activeBatch;
 
     if (txn == null) {
-      await boxCollection._db.delete(name, where: 'k = ?', whereArgs: [key]);
+      await (await boxCollection._bereit).delete(name, where: 'k = ?', whereArgs: [key]);
     } else {
       txn.delete(name, where: 'k = ?', whereArgs: [key]);
     }
@@ -284,7 +317,7 @@ class Box<V> {
 
     final placeholder = keys.map((_) => '?').join(',');
     if (txn == null) {
-      await boxCollection._db.delete(
+      await (await boxCollection._bereit).delete(
         name,
         where: 'k IN ($placeholder)',
         whereArgs: keys,
@@ -309,7 +342,7 @@ class Box<V> {
     txn ??= boxCollection._activeBatch;
 
     if (txn == null) {
-      await boxCollection._db.delete(name);
+      await (await boxCollection._bereit).delete(name);
     } else {
       txn.delete(name);
     }
