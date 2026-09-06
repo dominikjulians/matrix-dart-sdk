@@ -7,6 +7,7 @@ import 'dart:convert';
 
 import 'package:sqflite_common/sqflite.dart';
 
+import '../../matrix.dart';
 import 'zone_transaction_mixin.dart';
 
 /// Key-Value store abstraction over Sqflite so that the sdk database can use
@@ -41,25 +42,31 @@ class BoxCollection with ZoneTransactionMixin {
     final oeffnen = wiederoeffnen;
     if (oeffnen != null) {
       _wiederoeffnenLaeuft ??= () async {
+        final uhr = Stopwatch()..start();
         try {
           aufwachen(await oeffnen());
+          Logs().i(
+            '[Hintergrund] Datenbank beim Zugriff selbst wieder geoeffnet '
+            'in ${uhr.elapsedMilliseconds} ms',
+          );
         } finally {
           _wiederoeffnenLaeuft = null;
         }
       }();
       try {
         await _wiederoeffnenLaeuft;
-      } catch (_) {
+      } catch (e) {
         // Wiederoeffnen gescheitert: unten weiter warten, ein spaeterer
         // Zugriff versucht es erneut.
+        Logs().w('[Hintergrund] Datenbank nicht selbst wieder geoeffnet', e);
       }
       if (_schlaf == null) return _db;
     }
     await tor.future.timeout(
       wartezeitTor,
       onTimeout: () => throw StateError(
-        'Datenbank schlaeft seit mehr als ${wartezeitTor.inSeconds} s '
-        '(Hintergrund) — Verbindung konnte nicht wieder geoeffnet werden',
+        'Die Datenbank konnte nach dem Hintergrund nicht wieder geoeffnet '
+        'werden. Bitte die App einmal schliessen und neu starten.',
       ),
     );
     return _db;
