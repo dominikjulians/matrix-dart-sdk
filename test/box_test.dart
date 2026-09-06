@@ -171,6 +171,41 @@ void main() {
       expect(await box.get('loki'), data2);
     });
 
+    test('schlafen im Hintergrund: Zugriff wartet, wiederoeffnen bleibt aus', () async {
+      if (isWeb) return;
+      final box = collection.openBox<Map>('cats');
+      await box.put('fluffy', data);
+      var aufrufe = 0;
+      collection.wiederoeffnen = () async {
+        aufrufe++;
+        final neu = await databaseFactoryFfi.openDatabase(':memory:');
+        await BoxCollection.open('testbox', boxNames, sqfliteDatabase: neu,
+            sqfliteFactory: databaseFactoryFfi);
+        return neu;
+      };
+      collection.imHintergrund = true;
+      await collection.schlafen();
+      var fertig = false;
+      final zugriff = box.getAllKeys().then((k) {
+        fertig = true;
+        return k;
+      });
+      await Future.delayed(const Duration(milliseconds: 200));
+      // Im Hintergrund: kein Wiederoeffnen, der Zugriff wartet am Tor.
+      expect(aufrufe, 0);
+      expect(fertig, isFalse);
+      expect(collection.istOffen, isFalse);
+      // Zurueck im Vordergrund oeffnet die App die Verbindung selbst.
+      collection.imHintergrund = false;
+      final neu = await databaseFactoryFfi.openDatabase(':memory:');
+      await BoxCollection.open('testbox', boxNames, sqfliteDatabase: neu,
+          sqfliteFactory: databaseFactoryFfi);
+      collection.aufwachen(neu);
+      await zugriff;
+      expect(fertig, isTrue);
+      expect(aufrufe, 0);
+    });
+
     test('schlafen mit scheiterndem wiederoeffnen: Fehler statt ewig warten', () async {
       if (isWeb) return;
       final box = collection.openBox<Map>('cats');

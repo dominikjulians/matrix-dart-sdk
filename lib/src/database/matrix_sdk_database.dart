@@ -379,6 +379,12 @@ class MatrixSdkDatabase extends DatabaseApi with DatabaseFileStorage {
   set hintergrundWiederoeffnen(Future<Database> Function()? verfahren) =>
       _collection.wiederoeffnen = verfahren;
 
+  /// Hintergrund (06.09.2026): true, solange die App im Hintergrund ist —
+  /// dann oeffnet die Selbstheilung die Verbindung nicht, Zugriffe warten
+  /// am Tor (iOS 0xdead10cc bei offener Datei im geteilten Container).
+  set hintergrundAktiv(bool wert) => _collection.imHintergrund = wert;
+  bool get hintergrundAktiv => _collection.imHintergrund;
+
   @override
   Future<void> deleteFromToDeviceQueue(int id) async {
     await _toDeviceQueueBox.delete(id.toString());

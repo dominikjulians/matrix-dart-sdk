@@ -34,13 +34,21 @@ class BoxCollection with ZoneTransactionMixin {
   Future<Database> Function()? wiederoeffnen;
   Future<void>? _wiederoeffnenLaeuft;
 
+  /// Hintergrund (06.09.2026, iOS 0xdead10cc): Solange die App im Hintergrund
+  /// ist, darf die Selbstheilung die Datei NICHT wieder oeffnen — jede offene
+  /// SQLite-Verbindung auf die Datei im geteilten Container laesst iOS die App
+  /// beim Einfrieren abschiessen. Zugriffe warten dann am Tor, bis die App
+  /// zurueckkehrt ([aufwachen]). Die App setzt das Feld vor [schlafen] und
+  /// nimmt es beim Zurueckkehren zurueck.
+  bool imHintergrund = false;
+
   static const wartezeitTor = Duration(seconds: 20);
 
   Future<Database> get _bereit async {
     final tor = _schlaf;
     if (tor == null) return _db;
     final oeffnen = wiederoeffnen;
-    if (oeffnen != null) {
+    if (oeffnen != null && !imHintergrund) {
       _wiederoeffnenLaeuft ??= () async {
         final uhr = Stopwatch()..start();
         try {
