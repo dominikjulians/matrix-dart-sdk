@@ -147,6 +147,9 @@ class BoxCollection with ZoneTransactionMixin {
   }
 
   /// Web: kein Hintergrund-Schliessen noetig (kein geteilter Container).
+  // Web: kein Hintergrund-Schlaf, Gegenstueck zur sqflite-Fassung (06.09.2026).
+  Future<Object?> Function()? wiederoeffnen;
+
   Future<void> schlafen() async {}
 
   void aufwachen(Object db) {}
