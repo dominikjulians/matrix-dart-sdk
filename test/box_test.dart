@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+import 'dart:async';
 import 'package:matrix/src/database/sqflite_box.dart'
     if (dart.library.js_interop) 'package:matrix/src/database/indexeddb_box.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -145,6 +146,39 @@ void main() {
       final erwartung = expectLater(wartend, throwsA(isA<StateError>()));
       await collection.close();
       await erwartung;
+    });
+
+    test('schlafen mit wiederoeffnen: Zugriff oeffnet die Verbindung selbst', () async {
+      if (isWeb) return;
+      final box = collection.openBox<Map>('cats');
+      await box.put('fluffy', data);
+      var aufrufe = 0;
+      collection.wiederoeffnen = () async {
+        aufrufe++;
+        final neu = await databaseFactoryFfi.openDatabase(':memory:');
+        await BoxCollection.open('testbox', boxNames, sqfliteDatabase: neu,
+            sqfliteFactory: databaseFactoryFfi);
+        return neu;
+      };
+      await collection.schlafen();
+      // Zwei gleichzeitige Zugriffe — nur EIN Wiederoeffnen.
+      final a = box.getAllKeys();
+      final b = box.getAllValues();
+      await Future.wait([a, b]);
+      expect(aufrufe, 1);
+      expect(collection.istOffen, isTrue);
+      await box.put('loki', data2);
+      expect(await box.get('loki'), data2);
+    });
+
+    test('schlafen mit scheiterndem wiederoeffnen: Fehler statt ewig warten', () async {
+      if (isWeb) return;
+      final box = collection.openBox<Map>('cats');
+      collection.wiederoeffnen = () async => throw Exception('Schluessel nicht lesbar');
+      await collection.schlafen();
+      // Kurze Wartezeit fuer den Test.
+      final wartend = box.getAllKeys().timeout(const Duration(seconds: 3), onTimeout: () => throw TimeoutException('x'));
+      await expectLater(wartend, throwsA(anything));
     });
   });
 }

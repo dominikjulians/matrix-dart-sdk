@@ -24,9 +24,44 @@ class BoxCollection with ZoneTransactionMixin {
   // [close] laesst Wartende mit einem klaren Fehler los.
   Completer<void>? _schlaf;
 
+  /// Selbstheilung (05./06.09.2026): Die App hinterlegt hier, wie die
+  /// Verbindung neu zu oeffnen ist (gleiche Datei, gleicher Schluessel).
+  /// Trifft ein Zugriff auf das geschlossene Tor, wird NICHT passiv gewartet,
+  /// sondern die Verbindung sofort wieder geoeffnet — sonst haengt die App
+  /// in einem Zustand fest, in dem jeder Chat „database_closed" zeigt, wenn
+  /// das Wiederoeffnen beim Zurueckkehren einmal scheiterte.
+  Future<Database> Function()? wiederoeffnen;
+  Future<void>? _wiederoeffnenLaeuft;
+
+  static const wartezeitTor = Duration(seconds: 20);
+
   Future<Database> get _bereit async {
     final tor = _schlaf;
-    if (tor != null) await tor.future;
+    if (tor == null) return _db;
+    final oeffnen = wiederoeffnen;
+    if (oeffnen != null) {
+      _wiederoeffnenLaeuft ??= () async {
+        try {
+          aufwachen(await oeffnen());
+        } finally {
+          _wiederoeffnenLaeuft = null;
+        }
+      }();
+      try {
+        await _wiederoeffnenLaeuft;
+      } catch (_) {
+        // Wiederoeffnen gescheitert: unten weiter warten, ein spaeterer
+        // Zugriff versucht es erneut.
+      }
+      if (_schlaf == null) return _db;
+    }
+    await tor.future.timeout(
+      wartezeitTor,
+      onTimeout: () => throw StateError(
+        'Datenbank schlaeft seit mehr als ${wartezeitTor.inSeconds} s '
+        '(Hintergrund) — Verbindung konnte nicht wieder geoeffnet werden',
+      ),
+    );
     return _db;
   }
 

@@ -374,6 +374,11 @@ class MatrixSdkDatabase extends DatabaseApi with DatabaseFileStorage {
 
   bool get hintergrundGeschlossen => !_collection.istOffen;
 
+  /// Selbstheilung (06.09.2026): Verfahren zum Wiederoeffnen hinterlegen —
+  /// ein Zugriff auf die schlafende Verbindung oeffnet sie damit selbst.
+  set hintergrundWiederoeffnen(Future<Database> Function()? verfahren) =>
+      _collection.wiederoeffnen = verfahren;
+
   @override
   Future<void> deleteFromToDeviceQueue(int id) async {
     await _toDeviceQueueBox.delete(id.toString());
