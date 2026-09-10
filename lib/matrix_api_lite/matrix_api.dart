@@ -20,6 +20,12 @@ class MatrixApi extends Api {
 
   set homeserver(Uri? uri) => baseUri = uri;
 
+  /// Basis fuer Medien (Upload/Download); null = wie [homeserver].
+  /// Siehe [Api.mediaBaseUri].
+  Uri? get mediaServer => mediaBaseUri;
+
+  set mediaServer(Uri? uri) => mediaBaseUri = uri;
+
   /// This is the access token for the matrix client. When it is undefined, then
   /// the user needs to sign in first.
   String? get accessToken => bearerToken;
@@ -87,7 +93,7 @@ class MatrixApi extends Api {
     (data is! String) ? json = jsonEncode(data) : json = data;
     if (data is List<int> || action.startsWith('/media/v3/upload')) json = data;
 
-    final url = homeserver!.resolveUri(
+    final url = resolveApiUri(
       Uri(path: '_matrix$action', queryParameters: query),
     );
 

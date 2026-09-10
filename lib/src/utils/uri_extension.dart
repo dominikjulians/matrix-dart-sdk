@@ -33,7 +33,7 @@ extension MxcUriExtension on Uri {
           '_matrix/media/v3/download/$host${hasPort ? ':$port' : ''}$path';
     }
 
-    final homeserver = client.homeserver;
+    final homeserver = client.mediaServer ?? client.homeserver;
     if (homeserver == null) return Uri();
 
     return homeserver.resolve(uriPath);
@@ -84,7 +84,7 @@ extension MxcUriExtension on Uri {
       ).replace(queryParameters: queryParameters);
     }
 
-    final homeserver = client.homeserver;
+    final homeserver = client.mediaServer ?? client.homeserver;
     if (homeserver == null) {
       return Uri();
     }
@@ -112,7 +112,7 @@ extension MxcUriExtension on Uri {
   )
   Uri getDownloadLink(Client matrix) => isScheme('mxc')
       ? matrix.homeserver != null
-            ? matrix.homeserver?.resolve(
+            ? (matrix.mediaServer ?? matrix.homeserver)?.resolve(
                     '_matrix/media/v3/download/$host${hasPort ? ':$port' : ''}$path',
                   ) ??
                   Uri()
@@ -135,7 +135,7 @@ extension MxcUriExtension on Uri {
     bool? animated = false,
   }) {
     if (!isScheme('mxc')) return Uri();
-    final homeserver = matrix.homeserver;
+    final homeserver = matrix.mediaServer ?? matrix.homeserver;
     if (homeserver == null) {
       return Uri();
     }
