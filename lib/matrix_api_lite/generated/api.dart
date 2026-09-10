@@ -63,6 +63,44 @@ class ProgressUploadRequest extends BaseRequest {
   }
 }
 
+/// Streams a request body of known length from a stream factory, reporting
+/// progress. For very large files (gigabytes) that must never be held in
+/// memory as a whole — the stream is opened lazily by [oeffnen], so the
+/// caller can hand over a file that is read chunk by chunk from disk.
+class StreamUploadRequest extends BaseRequest {
+  final Stream<List<int>> Function() oeffnen;
+  final int laenge;
+  final void Function(int sent, int total)? onProgress;
+
+  StreamUploadRequest(
+    super.method,
+    super.url,
+    this.oeffnen,
+    this.laenge, {
+    this.onProgress,
+  }) {
+    contentLength = laenge;
+  }
+
+  @override
+  ByteStream finalize() {
+    super.finalize();
+    final total = laenge;
+    final callback = onProgress;
+    callback?.call(0, total);
+    Stream<List<int>> generate() async* {
+      var sent = 0;
+      await for (final chunk in oeffnen()) {
+        yield chunk;
+        sent += chunk.length;
+        callback?.call(sent, total);
+      }
+    }
+
+    return ByteStream(generate());
+  }
+}
+
 class Api {
   Client httpClient;
   Uri? baseUri;
@@ -6377,6 +6415,39 @@ class Api {
   ///
   /// returns `content_uri`:
   /// The [`mxc://` URI](https://spec.matrix.org/unstable/client-server-api/#matrix-content-mxc-uris) to the uploaded content.
+  /// Like [uploadContent], but the body is streamed from [oeffnen] with a
+  /// known [laenge] — nothing is held in memory as a whole. Meant for files
+  /// of many hundred megabytes or gigabytes (10.09.2026, Dominik: at least
+  /// 2 GB must work).
+  Future<Uri> uploadContentStream(
+    Stream<List<int>> Function() oeffnen,
+    int laenge, {
+    String? filename,
+    String? contentType,
+    void Function(int sent, int total)? onProgress,
+  }) async {
+    final requestUri = Uri(
+      path: '_matrix/media/v3/upload',
+      queryParameters: {if (filename != null) 'filename': filename},
+    );
+    final request = StreamUploadRequest(
+      'POST',
+      resolveApiUri(requestUri),
+      oeffnen,
+      laenge,
+      onProgress: onProgress,
+    );
+    request.headers['authorization'] = 'Bearer ${bearerToken!}';
+    if (contentType != null) request.headers['content-type'] = contentType;
+    final response = await httpClient.send(request);
+    final responseBody = await response.stream.toBytes();
+    if (response.statusCode != 200) unexpectedResponse(response, responseBody);
+    final json = jsonDecode(utf8.decode(responseBody));
+    return ((json['content_uri'] as String).startsWith("mxc://")
+        ? Uri.parse(json['content_uri'] as String)
+        : throw Exception("Uri not an mxc URI"));
+  }
+
   Future<Uri> uploadContent(
     Uint8List body, {
     String? filename,
