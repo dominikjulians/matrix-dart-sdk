@@ -2,7 +2,7 @@ import 'dart:typed_data';
 
 import 'package:test/test.dart';
 
-import 'package:matrix/matrix_api_lite.dart';
+import 'package:matrix/matrix_api_lite/generated/api.dart';
 
 void main() {
   test(
