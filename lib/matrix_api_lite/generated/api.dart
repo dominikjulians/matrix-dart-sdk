@@ -92,7 +92,7 @@ class Api {
     if (media != null && isMediaPath(requestUri.path)) {
       return media.resolveUri(requestUri);
     }
-    return resolveApiUri(requestUri);
+    return baseUri!.resolveUri(requestUri);
   }
 
   String? bearerToken;
