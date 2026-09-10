@@ -45,8 +45,15 @@ void main() {
     });
 
     test('Pfad mit fuehrendem Schraegstrich wie in request()', () {
-      expect(MatrixApi.isMediaPath('/_matrix/media/v3/upload'), isTrue);
-      expect(MatrixApi.isMediaPath('/_matrix/client/v3/sync'), isFalse);
+      api.mediaServer = Uri.parse('https://dateien.example.org');
+      expect(
+        api.resolveApiUri(Uri(path: '/_matrix/media/v3/upload')).host,
+        'dateien.example.org',
+      );
+      expect(
+        api.resolveApiUri(Uri(path: '/_matrix/client/v3/sync')).host,
+        'matrix.example.org',
+      );
     });
   });
 }
