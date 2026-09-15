@@ -387,6 +387,12 @@ class Event extends MatrixEvent {
     if (status.isSent) {
       throw Exception('Can only delete events which are not sent yet!');
     }
+    // Laeuft zu dieser Nachricht noch ein Datei-Upload, wird er gestoppt —
+    // sonst liefe er im Hintergrund weiter und stellte die Nachricht am Ende
+    // doch zu (15.09.2026).
+    room.uploadAbbrechen(eventId);
+    final tx = transactionId;
+    if (tx != null && tx != eventId) room.uploadAbbrechen(tx);
 
     await room.client.database.removeEvent(eventId, room.id);
 

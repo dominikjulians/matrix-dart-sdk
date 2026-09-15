@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
@@ -50,7 +51,16 @@ void main() {
       expect(umgeschlagen[7], 1);
     });
 
-    for (final laenge in [0, 1, 15, 16, 17, 4096, 4 * 1024 * 1024 + 5, 9 * 1024 * 1024 + 123]) {
+    for (final laenge in [
+      0,
+      1,
+      15,
+      16,
+      17,
+      4096,
+      4 * 1024 * 1024 + 5,
+      9 * 1024 * 1024 + 123,
+    ]) {
       test('gestreamt == Einmal-Verschluesselung bei $laenge Byte', () async {
         final klar = _zufall(laenge, laenge + 7);
         final key = _zufall(32, 1);
@@ -92,51 +102,55 @@ void main() {
     });
   });
 
+  abbruchTests();
+
   group('gestreamtHochladen (dart:io)', () {
-    test('verschluesselt in Temp-Datei, laedt mit Fortschritt, raeumt auf',
-        () async {
-      final klar = _zufall(5 * 1024 * 1024 + 11, 42);
-      Uint8List? empfangen;
-      String? kopfTyp;
-      final api = Api(
-        httpClient: MockClient.streaming((request, bodyStream) async {
-          empfangen = await bodyStream.toBytes();
-          kopfTyp = request.headers['content-type'];
-          expect(request.url.path, '/_matrix/media/v3/upload');
-          expect(request.url.queryParameters['filename'], 'crypt');
-          return http.StreamedResponse(
-            Stream.value(utf8.encode('{"content_uri":"mxc://s/abc"}')),
-            200,
-          );
-        }),
-        baseUri: Uri.parse('https://example.org'),
-        bearerToken: 'geheim',
-      );
-      final meldungen = <int>[];
-      final ergebnis = await gestreamtHochladen(
-        api,
-        oeffnen: () => _stueckweise(klar, [123456, 1024 * 1024]),
-        laenge: klar.length,
-        verschluesseln: true,
-        filename: 'Fallbestand.csv',
-        contentType: 'text/csv',
-        onProgress: (sent, total) => meldungen.add(sent),
-      );
-      expect(ergebnis.mxc.toString(), 'mxc://s/abc');
-      expect(kopfTyp, 'application/octet-stream');
-      expect(empfangen!.length, klar.length);
-      expect(meldungen.last, klar.length);
-      final meta = ergebnis.verschluesselung!;
-      final zurueck = await decryptFileImplementation(
-        EncryptedFile(
-          data: empfangen!,
-          k: meta.k,
-          iv: meta.iv,
-          sha256: meta.sha256,
-        ),
-      );
-      expect(zurueck, klar);
-    });
+    test(
+      'verschluesselt in Temp-Datei, laedt mit Fortschritt, raeumt auf',
+      () async {
+        final klar = _zufall(5 * 1024 * 1024 + 11, 42);
+        Uint8List? empfangen;
+        String? kopfTyp;
+        final api = Api(
+          httpClient: MockClient.streaming((request, bodyStream) async {
+            empfangen = await bodyStream.toBytes();
+            kopfTyp = request.headers['content-type'];
+            expect(request.url.path, '/_matrix/media/v3/upload');
+            expect(request.url.queryParameters['filename'], 'crypt');
+            return http.StreamedResponse(
+              Stream.value(utf8.encode('{"content_uri":"mxc://s/abc"}')),
+              200,
+            );
+          }),
+          baseUri: Uri.parse('https://example.org'),
+          bearerToken: 'geheim',
+        );
+        final meldungen = <int>[];
+        final ergebnis = await gestreamtHochladen(
+          api,
+          oeffnen: () => _stueckweise(klar, [123456, 1024 * 1024]),
+          laenge: klar.length,
+          verschluesseln: true,
+          filename: 'Fallbestand.csv',
+          contentType: 'text/csv',
+          onProgress: (sent, total) => meldungen.add(sent),
+        );
+        expect(ergebnis.mxc.toString(), 'mxc://s/abc');
+        expect(kopfTyp, 'application/octet-stream');
+        expect(empfangen!.length, klar.length);
+        expect(meldungen.last, klar.length);
+        final meta = ergebnis.verschluesselung!;
+        final zurueck = await decryptFileImplementation(
+          EncryptedFile(
+            data: empfangen!,
+            k: meta.k,
+            iv: meta.iv,
+            sha256: meta.sha256,
+          ),
+        );
+        expect(zurueck, klar);
+      },
+    );
 
     test('unverschluesselt: Klartext mit eigenem Typ und Namen', () async {
       final klar = _zufall(70000, 9);
@@ -165,5 +179,75 @@ void main() {
       expect(ergebnis.verschluesselung, isNull);
       expect(empfangen, klar);
     });
+  });
+}
+
+void abbruchTests() {
+  group('Abbruch laufender Uploads', () {
+    test('StreamUploadRequest endet mit UploadAbgebrochen', () async {
+      var stuecke = 0;
+      final req = StreamUploadRequest(
+        'POST',
+        Uri.parse('https://example.org/upload'),
+        () => Stream.fromIterable([
+          Uint8List(1000),
+          Uint8List(1000),
+          Uint8List(1000),
+        ]),
+        3000,
+        abgebrochen: () => stuecke >= 1,
+        onProgress: (sent, total) => stuecke++,
+      );
+      expect(() => req.finalize().toBytes(), throwsA(isA<UploadAbgebrochen>()));
+    });
+
+    test('ProgressUploadRequest endet mit UploadAbgebrochen', () async {
+      var abbruch = false;
+      final req = ProgressUploadRequest(
+        'POST',
+        Uri.parse('https://example.org/upload'),
+        Uint8List(200 * 1024),
+        abgebrochen: () => abbruch,
+        onProgress: (sent, total) => abbruch = sent >= 64 * 1024,
+      );
+      expect(() => req.finalize().toBytes(), throwsA(isA<UploadAbgebrochen>()));
+    });
+
+    test(
+      'gestreamtHochladen (io): Abbruch waehrend der Verschluesselung raeumt auf',
+      () async {
+        final klar = _zufall(2 * 1024 * 1024, 3);
+        var gelesen = 0;
+        final api = Api(
+          httpClient: MockClient.streaming((request, bodyStream) async {
+            fail('Es darf keine Anfrage geben');
+          }),
+          baseUri: Uri.parse('https://example.org'),
+          bearerToken: 'geheim',
+        );
+        final vorher = Directory.systemTemp
+            .listSync()
+            .where((e) => e.path.contains('ae-upload-'))
+            .length;
+        await expectLater(
+          gestreamtHochladen(
+            api,
+            oeffnen: () => _stueckweise(klar, [65536]).map((t) {
+              gelesen += t.length;
+              return t;
+            }),
+            laenge: klar.length,
+            verschluesseln: true,
+            abgebrochen: () => gelesen > 200000,
+          ),
+          throwsA(isA<UploadAbgebrochen>()),
+        );
+        final nachher = Directory.systemTemp
+            .listSync()
+            .where((e) => e.path.contains('ae-upload-'))
+            .length;
+        expect(nachher, vorher, reason: 'Temp-Ordner muss geraeumt sein');
+      },
+    );
   });
 }

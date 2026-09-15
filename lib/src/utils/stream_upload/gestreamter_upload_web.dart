@@ -31,17 +31,20 @@ Future<GestreamterUploadErgebnis> gestreamtHochladen(
   String? filename,
   String? contentType,
   void Function(int sent, int total)? onProgress,
+  bool Function()? abgebrochen,
 }) async {
   final teile = <JSAny>[];
   VerschluesselungsMeta? meta;
   if (verschluesseln) {
     final strom = StromVerschluesselung();
     await for (final stueck in strom.verschluesseln(oeffnen())) {
+      if (abgebrochen?.call() == true) throw const UploadAbgebrochen();
       teile.add(stueck.toJS);
     }
     meta = strom.meta;
   } else {
     await for (final stueck in oeffnen()) {
+      if (abgebrochen?.call() == true) throw const UploadAbgebrochen();
       teile.add(
         (stueck is Uint8List ? stueck : Uint8List.fromList(stueck)).toJS,
       );
@@ -58,12 +61,14 @@ Future<GestreamterUploadErgebnis> gestreamtHochladen(
     queryParameters: {'filename': verschluesseln ? 'crypt' : (filename ?? '')},
   );
   final ziel = api.resolveApiUri(requestUri);
+  if (abgebrochen?.call() == true) throw const UploadAbgebrochen();
   final antwort = await _xhrSenden(
     ziel,
     blob,
     bearer: api.bearerToken!,
     contentType: typ,
     onProgress: onProgress,
+    abgebrochen: abgebrochen,
   );
   final mxc = _mxcAus(antwort);
   return GestreamterUploadErgebnis(mxc: mxc, verschluesselung: meta);
@@ -82,8 +87,10 @@ Future<String> _xhrSenden(
   required String bearer,
   required String contentType,
   void Function(int sent, int total)? onProgress,
+  bool Function()? abgebrochen,
 }) {
   final fertig = Completer<String>();
+  var abbruch = false;
   final xhr = web.XMLHttpRequest();
   xhr.open('POST', ziel.toString());
   xhr.setRequestHeader('authorization', 'Bearer $bearer');
@@ -91,6 +98,11 @@ Future<String> _xhrSenden(
   final gesamt = blob.size;
   onProgress?.call(0, gesamt);
   xhr.upload.onprogress = ((web.ProgressEvent e) {
+    if (abgebrochen?.call() == true) {
+      abbruch = true;
+      xhr.abort();
+      return;
+    }
     onProgress?.call(e.loaded, e.lengthComputable ? e.total : gesamt);
   }).toJS;
   xhr.onload = ((web.Event _) {
@@ -115,7 +127,9 @@ Future<String> _xhrSenden(
     );
   }).toJS;
   xhr.onabort = ((web.Event _) {
-    fertig.completeError(Exception('Hochladen abgebrochen'));
+    fertig.completeError(
+      abbruch ? const UploadAbgebrochen() : Exception('Hochladen abgebrochen'),
+    );
   }).toJS;
   xhr.send(blob);
   return fertig.future;

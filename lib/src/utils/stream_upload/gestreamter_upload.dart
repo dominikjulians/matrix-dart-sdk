@@ -50,6 +50,7 @@ Future<GestreamterUploadErgebnis> gestreamtHochladen(
   String? filename,
   String? contentType,
   void Function(int sent, int total)? onProgress,
+  bool Function()? abgebrochen,
 }) => plattform.gestreamtHochladen(
   api,
   oeffnen: oeffnen,
@@ -58,4 +59,5 @@ Future<GestreamterUploadErgebnis> gestreamtHochladen(
   filename: filename,
   contentType: contentType,
   onProgress: onProgress,
+  abgebrochen: abgebrochen,
 );

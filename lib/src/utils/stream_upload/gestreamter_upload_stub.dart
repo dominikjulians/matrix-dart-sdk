@@ -13,6 +13,7 @@ Future<GestreamterUploadErgebnis> gestreamtHochladen(
   String? filename,
   String? contentType,
   void Function(int sent, int total)? onProgress,
+  bool Function()? abgebrochen,
 }) => throw UnsupportedError(
   'Gestreamter Upload: weder dart:io noch Browser verfuegbar',
 );

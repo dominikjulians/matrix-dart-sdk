@@ -26,9 +26,22 @@ import 'dart:typed_data';
 /// upload progress indicator. Used by [Api.uploadContent] when an `onProgress`
 /// callback is supplied. Without a callback the plain [Request] path is kept
 /// unchanged.
+/// Wird geworfen, wenn ein laufender Upload vom Aufrufer abgebrochen wurde
+/// (`Event.cancelSend()` waehrend des Sendens, 15.09.2026). Kein Fehler des
+/// Servers oder Netzes — der Sender soll den Platzhalter still entfernen.
+class UploadAbgebrochen implements Exception {
+  const UploadAbgebrochen();
+  @override
+  String toString() => 'Upload abgebrochen';
+}
+
 class ProgressUploadRequest extends BaseRequest {
   final Uint8List bodyBytes;
   final void Function(int sent, int total)? onProgress;
+
+  /// Liefert true, sobald der Aufrufer den Upload abgebrochen hat — der
+  /// Koerperstrom endet dann mit [UploadAbgebrochen].
+  final bool Function()? abgebrochen;
   static const int _chunkSize = 64 * 1024;
 
   ProgressUploadRequest(
@@ -36,6 +49,7 @@ class ProgressUploadRequest extends BaseRequest {
     super.url,
     this.bodyBytes, {
     this.onProgress,
+    this.abgebrochen,
   }) {
     contentLength = bodyBytes.length;
   }
@@ -50,6 +64,7 @@ class ProgressUploadRequest extends BaseRequest {
     Stream<List<int>> generate() async* {
       var sent = 0;
       for (var offset = 0; offset < total; offset += _chunkSize) {
+        if (abgebrochen?.call() == true) throw const UploadAbgebrochen();
         final end = offset + _chunkSize < total ? offset + _chunkSize : total;
         // sublistView avoids copying the (potentially large) body per chunk.
         final chunk = Uint8List.sublistView(bodyBytes, offset, end);
@@ -72,12 +87,16 @@ class StreamUploadRequest extends BaseRequest {
   final int laenge;
   final void Function(int sent, int total)? onProgress;
 
+  /// Siehe [ProgressUploadRequest.abgebrochen].
+  final bool Function()? abgebrochen;
+
   StreamUploadRequest(
     super.method,
     super.url,
     this.oeffnen,
     this.laenge, {
     this.onProgress,
+    this.abgebrochen,
   }) {
     contentLength = laenge;
   }
@@ -91,6 +110,7 @@ class StreamUploadRequest extends BaseRequest {
     Stream<List<int>> generate() async* {
       var sent = 0;
       await for (final chunk in oeffnen()) {
+        if (abgebrochen?.call() == true) throw const UploadAbgebrochen();
         yield chunk;
         sent += chunk.length;
         callback?.call(sent, total);
@@ -6425,6 +6445,7 @@ class Api {
     String? filename,
     String? contentType,
     void Function(int sent, int total)? onProgress,
+    bool Function()? abgebrochen,
   }) async {
     final requestUri = Uri(
       path: '_matrix/media/v3/upload',
@@ -6436,6 +6457,7 @@ class Api {
       oeffnen,
       laenge,
       onProgress: onProgress,
+      abgebrochen: abgebrochen,
     );
     request.headers['authorization'] = 'Bearer ${bearerToken!}';
     if (contentType != null) request.headers['content-type'] = contentType;
@@ -6453,18 +6475,20 @@ class Api {
     String? filename,
     String? contentType,
     void Function(int sent, int total)? onProgress,
+    bool Function()? abgebrochen,
   }) async {
     final requestUri = Uri(
       path: '_matrix/media/v3/upload',
       queryParameters: {if (filename != null) 'filename': filename},
     );
     final BaseRequest request;
-    if (onProgress != null) {
+    if (onProgress != null || abgebrochen != null) {
       request = ProgressUploadRequest(
         'POST',
         resolveApiUri(requestUri),
         body,
         onProgress: onProgress,
+        abgebrochen: abgebrochen,
       );
     } else {
       request = Request('POST', resolveApiUri(requestUri))..bodyBytes = body;

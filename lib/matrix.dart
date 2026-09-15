@@ -40,6 +40,7 @@ export 'src/utils/commands_extension.dart';
 export 'src/utils/content_scanner_config.dart';
 export 'src/utils/crypto/encrypted_file.dart';
 export 'src/utils/stream_upload/gestreamter_upload.dart';
+export 'matrix_api_lite/generated/api.dart' show UploadAbgebrochen;
 export 'src/utils/crypto/strom_verschluesselung.dart';
 export 'src/utils/device_keys_list.dart';
 export 'src/utils/event_localizations.dart';

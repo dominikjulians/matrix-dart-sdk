@@ -13,6 +13,7 @@ import 'package:mime/mime.dart';
 
 import '../matrix.dart';
 import 'models/timeline_chunk.dart';
+import '../matrix_api_lite/generated/api.dart' show UploadAbgebrochen;
 import 'utils/cached_stream_controller.dart';
 import 'utils/file_send_request_credentials.dart';
 import 'utils/markdown.dart';
@@ -63,6 +64,23 @@ class Room {
   /// Queue of sending events
   /// NOTE: This shouldn't be modified directly, use [sendEvent] instead. This is only used for testing.
   final sendingQueue = <Completer>[];
+
+  /// Laufende Datei-Uploads je Transaktions-ID: `true` = Abbruch verlangt.
+  /// `Event.cancelSend()` setzt das Zeichen; der Upload endet dann mit
+  /// [UploadAbgebrochen] und der Platzhalter wird still entfernt (15.09.2026:
+  /// vorher lief ein abgebrochener 314-MB-Upload im Hintergrund weiter und
+  /// stellte die Nachricht am Ende trotzdem zu).
+  final _laufendeUploads = <String, bool>{};
+
+  /// Bricht einen laufenden Upload ab. Gibt true zurueck, wenn zu [txid]
+  /// gerade ein Upload laeuft.
+  bool uploadAbbrechen(String txid) {
+    if (!_laufendeUploads.containsKey(txid)) return false;
+    _laufendeUploads[txid] = true;
+    return true;
+  }
+
+  bool _uploadAbgebrochen(String txid) => _laufendeUploads[txid] == true;
 
   /// List of transaction IDs of events that are currently queued to be sent
   final sendingQueueEventsByTxId = <String>[];
@@ -1065,6 +1083,8 @@ class Room {
             .first
             .unsigned![fileSendingStatusKey] =
         FileSendingStatus.uploading.name;
+    _laufendeUploads[txid] = false;
+    final txidFest = txid;
     while (uploadResp == null ||
         (uploadThumbnail != null && thumbnailUploadResp == null)) {
       try {
@@ -1073,6 +1093,7 @@ class Room {
           filename: uploadFile.name,
           contentType: uploadFile.mimeType,
           onProgress: onProgress,
+          abgebrochen: () => _uploadAbgebrochen(txidFest),
         );
         thumbnailUploadResp = uploadThumbnail != null
             ? await client.uploadContent(
@@ -1081,7 +1102,11 @@ class Room {
                 contentType: uploadThumbnail.mimeType,
               )
             : null;
+      } on UploadAbgebrochen {
+        _laufendeUploads.remove(txidFest);
+        return null;
       } on MatrixException catch (_) {
+        _laufendeUploads.remove(txidFest);
         syncUpdate
                 .rooms!
                 .join!
@@ -1095,6 +1120,10 @@ class Room {
         await _handleFakeSync(syncUpdate);
         rethrow;
       } catch (_) {
+        if (_uploadAbgebrochen(txidFest)) {
+          _laufendeUploads.remove(txidFest);
+          return null;
+        }
         if (DateTime.now().isAfter(timeoutDate)) {
           syncUpdate
                   .rooms!
@@ -1113,6 +1142,9 @@ class Room {
         await Future.delayed(Duration(seconds: 1));
       }
     }
+
+    _laufendeUploads.remove(txidFest);
+    if (_uploadAbgebrochen(txidFest)) return null;
 
     // Send event
     final content = <String, dynamic>{
@@ -1270,6 +1302,8 @@ class Room {
     final GestreamterUploadErgebnis ergebnis;
     Uri? thumbnailUploadResp;
     EncryptedFile? encryptedThumbnail;
+    final txidFest = txid;
+    _laufendeUploads[txidFest] = false;
     try {
       ergebnis = await gestreamtHochladen(
         client,
@@ -1279,6 +1313,7 @@ class Room {
         filename: name,
         contentType: mime,
         onProgress: onProgress,
+        abgebrochen: () => _uploadAbgebrochen(txidFest),
       );
       if (thumbnail != null) {
         MatrixFile hochzuladen = thumbnail;
@@ -1294,10 +1329,17 @@ class Room {
           contentType: hochzuladen.mimeType,
         );
       }
+    } on UploadAbgebrochen {
+      // cancelSend() hat den Platzhalter bereits entfernt — nichts markieren.
+      return null;
     } catch (_) {
+      if (_uploadAbgebrochen(txidFest)) return null;
       await fehlerMarkieren();
       rethrow;
+    } finally {
+      _laufendeUploads.remove(txidFest);
     }
+    if (_uploadAbgebrochen(txidFest)) return null;
 
     final meta = ergebnis.verschluesselung;
     final content = <String, dynamic>{

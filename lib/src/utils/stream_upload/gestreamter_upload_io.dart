@@ -18,6 +18,7 @@ Future<GestreamterUploadErgebnis> gestreamtHochladen(
   String? filename,
   String? contentType,
   void Function(int sent, int total)? onProgress,
+  bool Function()? abgebrochen,
 }) async {
   if (!verschluesseln) {
     final mxc = await api.uploadContentStream(
@@ -26,6 +27,7 @@ Future<GestreamterUploadErgebnis> gestreamtHochladen(
       filename: filename,
       contentType: contentType,
       onProgress: onProgress,
+      abgebrochen: abgebrochen,
     );
     return GestreamterUploadErgebnis(mxc: mxc);
   }
@@ -36,7 +38,9 @@ Future<GestreamterUploadErgebnis> gestreamtHochladen(
     final strom = StromVerschluesselung();
     final senke = ziel.openWrite();
     try {
-      await senke.addStream(strom.verschluesseln(oeffnen()));
+      await senke.addStream(
+        strom.verschluesseln(_abbrechbar(oeffnen(), abgebrochen)),
+      );
       await senke.flush();
     } catch (e) {
       // Ein Fehler im Strom schliesst die Senke bereits mit Fehler; das
@@ -62,6 +66,7 @@ Future<GestreamterUploadErgebnis> gestreamtHochladen(
       filename: 'crypt',
       contentType: 'application/octet-stream',
       onProgress: onProgress,
+      abgebrochen: abgebrochen,
     );
     return GestreamterUploadErgebnis(mxc: mxc, verschluesselung: meta);
   } finally {
@@ -70,5 +75,17 @@ Future<GestreamterUploadErgebnis> gestreamtHochladen(
     } catch (_) {
       // Ein Rest im Temp-Ordner ist aergerlich, aber kein Fehler des Uploads.
     }
+  }
+}
+
+/// Bricht den Klartext-Strom ab, sobald der Aufrufer es verlangt — auch die
+/// Verschluesselung in die Temp-Datei soll nicht bis zum Ende laufen.
+Stream<List<int>> _abbrechbar(
+  Stream<List<int>> quelle,
+  bool Function()? abgebrochen,
+) async* {
+  await for (final teil in quelle) {
+    if (abgebrochen?.call() == true) throw const UploadAbgebrochen();
+    yield teil;
   }
 }

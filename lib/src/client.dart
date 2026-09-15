@@ -1613,6 +1613,7 @@ class Client extends MatrixApi {
     /// progresses, together with the total. Enables live byte-progress for
     /// large uploads without blocking the UI.
     void Function(int sent, int total)? onProgress,
+    bool Function()? abgebrochen,
   }) async {
     final mediaConfig = await getConfig();
     final maxMediaSize = mediaConfig.mUploadSize;
@@ -1626,6 +1627,7 @@ class Client extends MatrixApi {
       filename: filename,
       contentType: contentType,
       onProgress: onProgress,
+      abgebrochen: abgebrochen,
     );
 
     final database = this.database;
