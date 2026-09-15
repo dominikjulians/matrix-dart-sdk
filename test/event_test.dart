@@ -251,6 +251,51 @@ void main() async {
       }
     });
 
+    test(
+      'Betrachter auf laufendem gestreamtem Upload bricht den Versand nicht ab',
+      () async {
+        final client = Client('testclient', database: await getDatabase());
+        final room = Room(id: '1234', client: client);
+        var abgebrochen = 0;
+        final sub = client.onCancelSendEvent.stream.listen(
+          (_) => abgebrochen++,
+        );
+        final event = Event.fromJson({
+          'event_id': '\$strom',
+          'sender': '@example:example.org',
+          'origin_server_ts': 1,
+          'type': 'm.room.message',
+          'room_id': '1234',
+          'content': {
+            'msgtype': 'm.file',
+            'body': 'Fallbestand.csv',
+            'filename': 'Fallbestand.csv',
+            'info': {'mimetype': 'text/csv', 'size': 314000000},
+          },
+          'unsigned': {'transaction_id': 'txid-strom'},
+          'status': EventStatus.sending.intValue,
+        }, room);
+        // Kein Eintrag im Datei-Cache (gestreamter Weg) und noch nicht
+        // gesendet: Es darf weder abgebrochen noch etwas geliefert werden.
+        await expectLater(
+          event.downloadAndDecryptAttachment(),
+          throwsA(anything),
+        );
+        await Future<void>.delayed(Duration.zero);
+        expect(abgebrochen, 0);
+        expect(event.status, EventStatus.sending);
+
+        // Erst ein fehlgeschlagenes Ereignis ohne Cache wird aufgeraeumt.
+        event.status = EventStatus.error;
+        await expectLater(event.sendAgain(), throwsA(anything));
+        await Future<void>.delayed(Duration.zero);
+        expect(abgebrochen, 1);
+
+        await sub.cancel();
+        await client.dispose();
+      },
+    );
+
     test('remove', () async {
       final event = Event.fromJson(
         jsonObj,

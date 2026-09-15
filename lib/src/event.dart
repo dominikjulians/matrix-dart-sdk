@@ -454,6 +454,12 @@ class Event extends MatrixEvent {
       Uri(scheme: 'cache', host: 'file', path: transactionId),
     );
     if (fileBytes == null) {
+      // Gestreamte Uploads (grosse Dateien) legen keine Kopie im Cache ab.
+      // Solange die Nachricht noch unterwegs ist, darf ein Blick auf die
+      // Blase (Betrachter, Vorschau) den Upload NICHT abbrechen — nur ein
+      // fehlgeschlagenes Ereignis ohne Cache ist wirklich verloren
+      // (15.09.2026: Antippen der laufenden 800-MB-Blase brach den Versand ab).
+      if (!status.isError) return null;
       await cancelSend();
       throw Exception('Can not try to send again. File is no longer cached.');
     }
