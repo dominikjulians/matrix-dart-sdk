@@ -20,6 +20,7 @@ dependencies:
   collection: ^1.15.0
   html: ^0.15.0
   html_unescape: ^2.0.0
+  crypto: ^3.0.6
   http: ">=0.13.0 <2.0.0"
   image: ^4.0.15
   markdown: ^7.1.1

@@ -18,6 +18,7 @@ import 'utils/file_send_request_credentials.dart';
 import 'utils/markdown.dart';
 import 'utils/marked_unread.dart';
 import 'utils/space_child.dart';
+import 'utils/stream_upload/gestreamter_upload.dart';
 
 /// max PDU size for server to accept the event with some buffer incase the server adds unsigned data f.ex age
 /// https://spec.matrix.org/v1.9/client-server-api/#size-limits
@@ -1179,6 +1180,180 @@ class Room {
       );
     }
     return eventId;
+  }
+
+  /// Sendet eine Datei aus einem Bytestrom, ohne sie als Ganzes im Speicher
+  /// zu halten — fuer grosse Dateien (Richtwert ab 64 MB) auf allen
+  /// Plattformen, auch in verschluesselten Raeumen.
+  ///
+  /// Unterschiede zu [sendFileEvent]: kein Datenbank-Cache der Datei (eine
+  /// abgebrochene Sendung wird nach einem Neustart nicht automatisch
+  /// wiederholt), keine Bildverkleinerung, [thumbnail] nur als kleines
+  /// [MatrixImageFile]. [oeffnen] liefert den Klartext jedes Mal neu von
+  /// vorn; [laenge] ist die Klartext-Groesse in Byte. Der Rest (Platzhalter
+  /// in der Zeitleiste, Ereignisinhalt mit `file`/`url`, Fortschritt) ist
+  /// identisch, damit Empfaenger keinen Unterschied sehen (15.09.2026).
+  Future<String?> sendFileEventStream({
+    required String name,
+    required int laenge,
+    required Stream<List<int>> Function() oeffnen,
+    String? mimeType,
+    String? txid,
+    Event? inReplyTo,
+    String? editEventId,
+    MatrixImageFile? thumbnail,
+    Map<String, dynamic>? extraContent,
+    String? threadRootEventId,
+    String? threadLastEventId,
+    bool displayPendingEvent = true,
+    void Function(int sent, int total)? onProgress,
+  }) async {
+    txid ??= client.generateUniqueTransactionId();
+    final mime = mimeType ?? lookupMimeType(name) ?? 'application/octet-stream';
+    final msgType = mime.startsWith('image/')
+        ? MessageTypes.Image
+        : mime.startsWith('video/')
+        ? MessageTypes.Video
+        : mime.startsWith('audio/')
+        ? MessageTypes.Audio
+        : MessageTypes.File;
+    final info = <String, dynamic>{'mimetype': mime, 'size': laenge};
+
+    final syncUpdate = SyncUpdate(
+      nextBatch: '',
+      rooms: RoomsUpdate(
+        join: {
+          id: JoinedRoomUpdate(
+            timeline: TimelineUpdate(
+              events: [
+                MatrixEvent(
+                  content: {
+                    'msgtype': msgType,
+                    'body': name,
+                    'filename': name,
+                    'info': info,
+                    ...?extraContent,
+                  },
+                  type: EventTypes.Message,
+                  eventId: txid,
+                  senderId: client.userID!,
+                  originServerTs: DateTime.now(),
+                  unsigned: {
+                    messageSendingStatusKey: EventStatus.sending.intValue,
+                    'transaction_id': txid,
+                    fileSendingStatusKey: FileSendingStatus.uploading.name,
+                  },
+                ),
+              ],
+            ),
+          ),
+        },
+      ),
+    );
+    await _handleFakeSync(syncUpdate);
+
+    Future<void> fehlerMarkieren() async {
+      syncUpdate
+              .rooms!
+              .join!
+              .values
+              .first
+              .timeline!
+              .events!
+              .first
+              .unsigned![messageSendingStatusKey] =
+          EventStatus.error.intValue;
+      await _handleFakeSync(syncUpdate);
+    }
+
+    final verschluesseln = encrypted && client.encryptionEnabled;
+    final GestreamterUploadErgebnis ergebnis;
+    Uri? thumbnailUploadResp;
+    EncryptedFile? encryptedThumbnail;
+    try {
+      ergebnis = await gestreamtHochladen(
+        client,
+        oeffnen: oeffnen,
+        laenge: laenge,
+        verschluesseln: verschluesseln,
+        filename: name,
+        contentType: mime,
+        onProgress: onProgress,
+      );
+      if (thumbnail != null) {
+        MatrixFile hochzuladen = thumbnail;
+        if (verschluesseln) {
+          encryptedThumbnail = await thumbnail.encrypt(
+            nativeImplementations: client.nativeImplementations,
+          );
+          hochzuladen = encryptedThumbnail.toMatrixFile();
+        }
+        thumbnailUploadResp = await client.uploadContent(
+          hochzuladen.bytes,
+          filename: hochzuladen.name,
+          contentType: hochzuladen.mimeType,
+        );
+      }
+    } catch (_) {
+      await fehlerMarkieren();
+      rethrow;
+    }
+
+    final meta = ergebnis.verschluesselung;
+    final content = <String, dynamic>{
+      'msgtype': msgType,
+      'body': name,
+      'filename': name,
+      if (meta == null) 'url': ergebnis.mxc.toString(),
+      if (meta != null)
+        'file': {
+          'url': ergebnis.mxc.toString(),
+          'mimetype': mime,
+          'v': 'v2',
+          'key': {
+            'alg': 'A256CTR',
+            'ext': true,
+            'k': meta.k,
+            'key_ops': ['encrypt', 'decrypt'],
+            'kty': 'oct',
+          },
+          'iv': meta.iv,
+          'hashes': {'sha256': meta.sha256},
+        },
+      'info': {
+        ...info,
+        if (thumbnail != null && encryptedThumbnail == null)
+          'thumbnail_url': thumbnailUploadResp.toString(),
+        if (thumbnail != null && encryptedThumbnail != null)
+          'thumbnail_file': {
+            'url': thumbnailUploadResp.toString(),
+            'mimetype': thumbnail.mimeType,
+            'v': 'v2',
+            'key': {
+              'alg': 'A256CTR',
+              'ext': true,
+              'k': encryptedThumbnail.k,
+              'key_ops': ['encrypt', 'decrypt'],
+              'kty': 'oct',
+            },
+            'iv': encryptedThumbnail.iv,
+            'hashes': {'sha256': encryptedThumbnail.sha256},
+          },
+        if (thumbnail != null) 'thumbnail_info': thumbnail.info,
+        if (thumbnail?.blurhash != null)
+          'xyz.amorgan.blurhash': thumbnail!.blurhash,
+      },
+      ...?extraContent,
+    };
+    return sendEvent(
+      content,
+      txid: txid,
+      inReplyTo: inReplyTo,
+      editEventId: editEventId,
+      threadRootEventId: threadRootEventId,
+      threadLastEventId: threadLastEventId,
+      displayPendingEvent: displayPendingEvent,
+    );
   }
 
   /// Calculates how secure the communication is. When all devices are blocked or
