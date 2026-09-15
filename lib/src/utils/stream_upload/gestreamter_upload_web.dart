@@ -32,6 +32,7 @@ Future<GestreamterUploadErgebnis> gestreamtHochladen(
   String? contentType,
   void Function(int sent, int total)? onProgress,
   bool Function()? abgebrochen,
+  Duration stille = stilleGrenze,
 }) async {
   final teile = <JSAny>[];
   VerschluesselungsMeta? meta;
@@ -69,6 +70,7 @@ Future<GestreamterUploadErgebnis> gestreamtHochladen(
     contentType: typ,
     onProgress: onProgress,
     abgebrochen: abgebrochen,
+    stille: stille,
   );
   final mxc = _mxcAus(antwort);
   return GestreamterUploadErgebnis(mxc: mxc, verschluesselung: meta);
@@ -88,10 +90,29 @@ Future<String> _xhrSenden(
   required String contentType,
   void Function(int sent, int total)? onProgress,
   bool Function()? abgebrochen,
+  Duration stille = stilleGrenze,
 }) {
   final fertig = Completer<String>();
   var abbruch = false;
+  var zuletzt = 0;
   final xhr = web.XMLHttpRequest();
+  // Keine Gesamtzeitgrenze (xhr.timeout bleibt 0). Nur Stille: kommt ueber
+  // [stille] hinweg kein Fortschrittsereignis, ist die Leitung eingeschlafen.
+  Timer? wache;
+  void fehler(Object e) {
+    wache?.cancel();
+    if (!fertig.isCompleted) fertig.completeError(e);
+  }
+
+  void wachen() {
+    wache?.cancel();
+    wache = Timer(stille, () {
+      if (fertig.isCompleted) return;
+      fehler(UploadStille(zuletzt, blob.size, stille));
+      xhr.abort();
+    });
+  }
+
   xhr.open('POST', ziel.toString());
   xhr.setRequestHeader('authorization', 'Bearer $bearer');
   xhr.setRequestHeader('content-type', contentType);
@@ -103,34 +124,38 @@ Future<String> _xhrSenden(
       xhr.abort();
       return;
     }
+    if (e.loaded != zuletzt) {
+      zuletzt = e.loaded;
+      wachen();
+    }
     onProgress?.call(e.loaded, e.lengthComputable ? e.total : gesamt);
   }).toJS;
   xhr.onload = ((web.Event _) {
+    wache?.cancel();
     final status = xhr.status;
     final text = xhr.responseText;
     if (status == 200) {
       onProgress?.call(gesamt, gesamt);
-      fertig.complete(text);
+      if (!fertig.isCompleted) fertig.complete(text);
       return;
     }
-    Object fehler = Exception('http error response ($status)');
+    Object grund = Exception('http error response ($status)');
     try {
-      fehler = MatrixException.fromJson(
+      grund = MatrixException.fromJson(
         (jsonDecode(text) as Map).cast<String, Object?>(),
       );
     } catch (_) {}
-    fertig.completeError(fehler);
+    fehler(grund);
   }).toJS;
   xhr.onerror = ((web.Event _) {
-    fertig.completeError(
-      Exception('Netzfehler beim Hochladen (Verbindung abgebrochen)'),
-    );
+    fehler(Exception('Netzfehler beim Hochladen (Verbindung abgebrochen)'));
   }).toJS;
   xhr.onabort = ((web.Event _) {
-    fertig.completeError(
+    fehler(
       abbruch ? const UploadAbgebrochen() : Exception('Hochladen abgebrochen'),
     );
   }).toJS;
+  wachen();
   xhr.send(blob);
   return fertig.future;
 }

@@ -13,13 +13,11 @@ import 'package:mime/mime.dart';
 
 import '../matrix.dart';
 import 'models/timeline_chunk.dart';
-import '../matrix_api_lite/generated/api.dart' show UploadAbgebrochen;
 import 'utils/cached_stream_controller.dart';
 import 'utils/file_send_request_credentials.dart';
 import 'utils/markdown.dart';
 import 'utils/marked_unread.dart';
 import 'utils/space_child.dart';
-import 'utils/stream_upload/gestreamter_upload.dart';
 
 /// max PDU size for server to accept the event with some buffer incase the server adds unsigned data f.ex age
 /// https://spec.matrix.org/v1.9/client-server-api/#size-limits

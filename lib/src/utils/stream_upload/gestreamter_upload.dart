@@ -28,6 +28,10 @@ import 'gestreamter_upload_stub.dart'
 
 export '../crypto/strom_verschluesselung.dart' show VerschluesselungsMeta;
 
+/// Stille-Grenze des Dateiwegs: Laeuft so lange kein Byte hinaus, gilt die
+/// Leitung als eingeschlafen ([UploadStille]). Bewusst KEINE Gesamtgrenze.
+const Duration stilleGrenze = Duration(seconds: 120);
+
 /// Ergebnis: die `mxc://`-Adresse und — in verschluesselten Raeumen — die
 /// Werte fuer den `file`-Block des Ereignisses.
 class GestreamterUploadErgebnis {
@@ -41,7 +45,10 @@ class GestreamterUploadErgebnis {
 ///
 /// [oeffnen] muss den Klartext jedes Mal neu von vorn liefern (Wiederholung
 /// nach Netzfehlern); [laenge] ist die Klartext-Laenge in Byte. [onProgress]
-/// meldet gesendete Bytes des Uploads (nicht der Verschluesselung).
+/// meldet gesendete Bytes des Uploads (nicht der Verschluesselung) — auf
+/// dart:io erst, wenn das Betriebssystem das Stueck angenommen hat, im
+/// Browser aus den Fortschrittsereignissen des XMLHttpRequest. [stille]
+/// ist die einzige Zeitgrenze: so lange ohne gesendetes Byte → [UploadStille].
 Future<GestreamterUploadErgebnis> gestreamtHochladen(
   Api api, {
   required Stream<List<int>> Function() oeffnen,
@@ -51,6 +58,7 @@ Future<GestreamterUploadErgebnis> gestreamtHochladen(
   String? contentType,
   void Function(int sent, int total)? onProgress,
   bool Function()? abgebrochen,
+  Duration stille = stilleGrenze,
 }) => plattform.gestreamtHochladen(
   api,
   oeffnen: oeffnen,
@@ -60,4 +68,5 @@ Future<GestreamterUploadErgebnis> gestreamtHochladen(
   contentType: contentType,
   onProgress: onProgress,
   abgebrochen: abgebrochen,
+  stille: stille,
 );

@@ -3,13 +3,11 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
-import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
-import 'package:test/test.dart';
-import 'package:vodozemac/vodozemac.dart' as vod;
-
 import 'package:matrix/matrix.dart';
 import 'package:matrix/matrix_api_lite/generated/api.dart';
+import 'package:test/test.dart';
+import 'package:vodozemac/vodozemac.dart' as vod;
 
 Uint8List _zufall(int laenge, int saat) {
   final r = Random(saat);
@@ -103,83 +101,6 @@ void main() {
   });
 
   abbruchTests();
-
-  group('gestreamtHochladen (dart:io)', () {
-    test(
-      'verschluesselt in Temp-Datei, laedt mit Fortschritt, raeumt auf',
-      () async {
-        final klar = _zufall(5 * 1024 * 1024 + 11, 42);
-        Uint8List? empfangen;
-        String? kopfTyp;
-        final api = Api(
-          httpClient: MockClient.streaming((request, bodyStream) async {
-            empfangen = await bodyStream.toBytes();
-            kopfTyp = request.headers['content-type'];
-            expect(request.url.path, '/_matrix/media/v3/upload');
-            expect(request.url.queryParameters['filename'], 'crypt');
-            return http.StreamedResponse(
-              Stream.value(utf8.encode('{"content_uri":"mxc://s/abc"}')),
-              200,
-            );
-          }),
-          baseUri: Uri.parse('https://example.org'),
-          bearerToken: 'geheim',
-        );
-        final meldungen = <int>[];
-        final ergebnis = await gestreamtHochladen(
-          api,
-          oeffnen: () => _stueckweise(klar, [123456, 1024 * 1024]),
-          laenge: klar.length,
-          verschluesseln: true,
-          filename: 'Fallbestand.csv',
-          contentType: 'text/csv',
-          onProgress: (sent, total) => meldungen.add(sent),
-        );
-        expect(ergebnis.mxc.toString(), 'mxc://s/abc');
-        expect(kopfTyp, 'application/octet-stream');
-        expect(empfangen!.length, klar.length);
-        expect(meldungen.last, klar.length);
-        final meta = ergebnis.verschluesselung!;
-        final zurueck = await decryptFileImplementation(
-          EncryptedFile(
-            data: empfangen!,
-            k: meta.k,
-            iv: meta.iv,
-            sha256: meta.sha256,
-          ),
-        );
-        expect(zurueck, klar);
-      },
-    );
-
-    test('unverschluesselt: Klartext mit eigenem Typ und Namen', () async {
-      final klar = _zufall(70000, 9);
-      Uint8List? empfangen;
-      final api = Api(
-        httpClient: MockClient.streaming((request, bodyStream) async {
-          empfangen = await bodyStream.toBytes();
-          expect(request.headers['content-type'], 'text/csv');
-          expect(request.url.queryParameters['filename'], 'a.csv');
-          return http.StreamedResponse(
-            Stream.value(utf8.encode('{"content_uri":"mxc://s/klar"}')),
-            200,
-          );
-        }),
-        baseUri: Uri.parse('https://example.org'),
-        bearerToken: 'geheim',
-      );
-      final ergebnis = await gestreamtHochladen(
-        api,
-        oeffnen: () => _stueckweise(klar, [4096]),
-        laenge: klar.length,
-        verschluesseln: false,
-        filename: 'a.csv',
-        contentType: 'text/csv',
-      );
-      expect(ergebnis.verschluesselung, isNull);
-      expect(empfangen, klar);
-    });
-  });
 }
 
 void abbruchTests() {

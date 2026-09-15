@@ -35,6 +35,23 @@ class UploadAbgebrochen implements Exception {
   String toString() => 'Upload abgebrochen';
 }
 
+/// Der Upload-Koerper kam ueber [stille] hinweg nicht voran (kein Byte vom
+/// Betriebssystem angenommen bzw. keine Fortschrittsmeldung des Browsers).
+/// Das ist die EINZIGE Zeitgrenze des Dateiwegs: keine feste Gesamtdauer —
+/// eine 330-MB-Datei ueber 0,85 MB/s darf sieben Minuten brauchen
+/// (Kunde 15.09.2026), nur eine eingeschlafene Leitung wird beendet.
+class UploadStille implements Exception {
+  const UploadStille(this.gesendet, this.gesamt, this.stille);
+  final int gesendet;
+  final int gesamt;
+  final Duration stille;
+  @override
+  String toString() =>
+      'Verbindung eingeschlafen: seit ${stille.inSeconds} s keine Daten '
+      'gesendet (${(gesendet / 1e6).toStringAsFixed(1)} von '
+      '${(gesamt / 1e6).toStringAsFixed(1)} MB)';
+}
+
 class ProgressUploadRequest extends BaseRequest {
   final Uint8List bodyBytes;
   final void Function(int sent, int total)? onProgress;
