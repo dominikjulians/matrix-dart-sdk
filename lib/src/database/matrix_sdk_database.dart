@@ -1345,9 +1345,96 @@ class MatrixSdkDatabase extends DatabaseApi with DatabaseFileStorage {
     }
   }
 
+  /// Höchstens so viele Schlüssel je Löschanweisung (SQLite-Grenze für
+  /// Variablen je Anweisung; ältere Fassungen erlauben nur 999).
+  static const _loeschPortion = 500;
+
+  /// Höchstens so viele Ereignisse löscht [deleteTimelineForRoom] sofort, im
+  /// laufenden Sync. Mit [Client.zeitleisteGrenze] ist eine Zeitleiste nie
+  /// größer; nur eine übergroße Altliste (vor dem 31.10.2026 gewachsen, bis
+  /// 58 450 Kennungen gemessen) würde den Sync sonst lange aufhalten — ihren
+  /// Rest räumt die App im Hintergrund (Waisen, `verwaisteEreignisseLoeschen`
+  /// bzw. die Datenbank-Wache der App).
+  /// Veränderbar nur für Tests.
+  static int loeschenHoechstens = 5000;
+
   @override
-  Future<void> deleteTimelineForRoom(String roomId) =>
-      _timelineFragmentsBox.delete(TupleKey(roomId, '').toString());
+  Future<void> deleteTimelineForRoom(String roomId) async {
+    // Fork 31.10.2026: Bis hierher löschte das SDK nur die Kennungsliste; die
+    // Ereignisse blieben als Waisen in `box_events` liegen (Windows-Abzug vom
+    // 30.10.2026: 512 018 Waisen = 7,6 GB von 10,1 GB). Jetzt gehen sie mit.
+    final key = TupleKey(roomId, '').toString();
+    final ids = List<String>.from(await _timelineFragmentsBox.get(key) ?? []);
+    final sending = Set<String>.from(
+      await _timelineFragmentsBox.get(TupleKey(roomId, 'SENDING').toString()) ??
+          [],
+    );
+    await _timelineFragmentsBox.delete(key);
+    var keys = <String>{
+      for (final id in ids)
+        if (!sending.contains(id)) TupleKey(roomId, id).toString(),
+    }.toList();
+    if (keys.length > loeschenHoechstens) {
+      Logs().i(
+        '[Zeitleiste] $roomId: ${keys.length} Ereignisse verworfen, '
+        '$loeschenHoechstens sofort gelöscht, der Rest im Hintergrund',
+      );
+      keys = keys.sublist(0, loeschenHoechstens);
+    }
+    for (var i = 0; i < keys.length; i += _loeschPortion) {
+      await _eventsBox.deleteAll(
+        keys.sublist(i, min(i + _loeschPortion, keys.length)),
+      );
+    }
+  }
+
+  @override
+  Future<int> getTimelineEventCount(String roomId) async =>
+      (await _timelineFragmentsBox.get(
+        TupleKey(roomId, '').toString(),
+      ))?.length ??
+      0;
+
+  /// Räumt Ereignisse, die in keiner Zeitleiste ihres Raums stehen (weder in
+  /// der synchronisierten Liste noch in `SENDING`) — der Altbestand aus der
+  /// Zeit, als [deleteTimelineForRoom] nur die Liste löschte (Fork
+  /// 31.10.2026). Läuft in EINER Transaktion über alle Schlüssel und ist für
+  /// das Web gedacht (IndexedDB); auf SQLite räumt die App schneller und in
+  /// Portionen mit [mitVerbindungExklusiv]. Liefert die Zahl der gelöschten
+  /// Ereignisse.
+  Future<int> verwaisteEreignisseLoeschen() async {
+    var entfernt = 0;
+    await transaction(() async {
+      final listen = await _timelineFragmentsBox.getAllValues();
+      final behalten = <String>{};
+      for (final entry in listen.entries) {
+        final raum = TupleKey.fromString(entry.key).parts.first;
+        for (final id in entry.value) {
+          behalten.add(TupleKey(raum, '$id').toString());
+        }
+      }
+      final alle = await _eventsBox.getAllKeys();
+      final weg = alle.where((k) => !behalten.contains(k)).toList();
+      for (var i = 0; i < weg.length; i += _loeschPortion) {
+        await _eventsBox.deleteAll(
+          weg.sublist(i, min(i + _loeschPortion, weg.length)),
+        );
+      }
+      entfernt = weg.length;
+    });
+    // Die Schlüsselliste aller Ereignisse nicht im Speicher halten.
+    _eventsBox.clearQuickAccessCache();
+    return entfernt;
+  }
+
+  /// Führt [aktion] auf der SQLite-Verbindung aus, exklusiv gegenüber den
+  /// Transaktionen des SDK (dieselbe Sperre; [hintergrundSchliessen] wartet
+  /// darauf). Für Wartung in kleinen Portionen, etwa das Räumen des
+  /// Altbestands oder `VACUUM` (Fork 31.10.2026). Nur auf SQLite; im Web
+  /// [UnsupportedError].
+  Future<void> mitVerbindungExklusiv(
+    Future<void> Function(Database db) aktion,
+  ) => _collection.exklusiv(aktion);
 
   @override
   Future<void> storeSSSSCache(

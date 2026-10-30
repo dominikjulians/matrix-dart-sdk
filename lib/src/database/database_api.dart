@@ -64,7 +64,20 @@ abstract class DatabaseApi {
     Client client,
   );
 
+  /// Verwirft die gespeicherte Zeitleiste eines Raums (nach einem Sync mit
+  /// `limited: true` oder an der Obergrenze [Client.zeitleisteGrenze]).
+  ///
+  /// Fork 31.10.2026: Löscht auch die Ereignisse dieser Zeitleiste, nicht nur
+  /// die Liste ihrer Kennungen — sonst bleiben sie als Waisen für immer in der
+  /// Datenbank (gemessen 11,2 GB unter Windows, 20 GB am Mac). Eigene
+  /// Ereignisse, die noch gesendet werden oder fehlgeschlagen sind (Liste
+  /// `SENDING`), bleiben. Wer ein gelöschtes Ereignis später braucht, lädt es
+  /// vom Server ([Room.getEventById], Verlauf über `prev_batch`).
   Future<void> deleteTimelineForRoom(String roomId);
+
+  /// Zahl der gespeicherten (synchronisierten) Ereignisse in der Zeitleiste
+  /// eines Raums, ohne die Liste `SENDING` (Fork 31.10.2026).
+  Future<int> getTimelineEventCount(String roomId);
 
   /// Stores an EventUpdate object in the database. Must be called inside of
   /// [transaction].

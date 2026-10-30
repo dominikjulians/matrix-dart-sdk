@@ -77,6 +77,26 @@ class Client extends MatrixApi {
 
   bool requestHistoryOnLimitedTimeline;
 
+  /// Obergrenze der gespeicherten Ereignisse je Raum (Fork 31.10.2026).
+  ///
+  /// Räume, deren Sync nie `limited` ist, wuchsen ohne Ende — und die Liste
+  /// ihrer Ereignis-Kennungen wurde bei JEDEM neuen Ereignis ganz neu
+  /// geschrieben (Windows-Abzug 30.10.2026: 58 450 Kennungen, 2,7 MB je
+  /// Ereignis). Würde ein Sync die Zeitleiste eines Raums über diese Grenze
+  /// bringen, behandelt das SDK ihn wie einen `limited`-Sync: Die gespeicherte
+  /// Zeitleiste samt ihren Ereignissen wird verworfen, die Ereignisse dieses
+  /// Syncs bleiben, `prev_batch` zeigt auf den Anfang dieses Syncs — ältere
+  /// Ereignisse lädt „Verlauf laden“ vom Server nach wie nach jedem
+  /// `limited`-Sync. Greift nur, wenn der Sync einen `prev_batch` liefert.
+  /// `null` oder 0 schaltet die Grenze ab.
+  int? zeitleisteGrenze;
+
+  /// Standard für [zeitleisteGrenze]: 2000 Ereignisse. In einem Agentenraum
+  /// mit fortgeschriebenen Karten sind das einige Tage, in einem Chat
+  /// Monate; die Kennungsliste bleibt unter 100 KB, der Raum unter rund
+  /// 30 MB (gemessen: im Mittel 15 KB je Ereignis in den Hub-Räumen).
+  static const zeitleisteGrenzeStandard = 2000;
+
   final bool formatLocalpart;
 
   final bool mxidLocalPartFallback;
@@ -186,6 +206,7 @@ class Client extends MatrixApi {
     @Deprecated('Use [sendTimelineEventTimeout] instead.')
     int? sendMessageTimeoutSeconds,
     this.requestHistoryOnLimitedTimeline = false,
+    this.zeitleisteGrenze = zeitleisteGrenzeStandard,
     Set<String>? supportedLoginTypes,
     this.mxidLocalPartFallback = true,
     this.formatLocalpart = true,
@@ -2731,6 +2752,34 @@ class Client extends MatrixApi {
     _eventsPendingDecryption.removeWhere((e) => e.timedOut);
   }
 
+  /// Setzt `limited` an einem Sync, der die gespeicherte Zeitleiste des Raums
+  /// [roomId] über [zeitleisteGrenze] brächte (Fork 31.10.2026). Ohne
+  /// `prev_batch` im Sync bleibt alles, wie es ist (sonst fände „Verlauf
+  /// laden“ keinen Anschluss); die Grenze greift dann beim nächsten Sync.
+  Future<void> _zeitleisteBegrenzen(
+    String roomId,
+    JoinedRoomUpdate update,
+  ) async {
+    final grenze = zeitleisteGrenze;
+    final timeline = update.timeline;
+    final neu = timeline?.events?.length ?? 0;
+    if (grenze == null ||
+        grenze <= 0 ||
+        timeline == null ||
+        timeline.limited == true ||
+        timeline.prevBatch == null ||
+        neu == 0) {
+      return;
+    }
+    final gespeichert = await database.getTimelineEventCount(roomId);
+    if (gespeichert + neu <= grenze) return;
+    Logs().i(
+      '[Zeitleiste] $roomId: $gespeichert + $neu Ereignisse über der Grenze '
+      '$grenze — gespeicherte Zeitleiste wird verworfen (wie limited)',
+    );
+    timeline.limited = true;
+  }
+
   Future<void> _handleRooms(
     Map<String, SyncRoomUpdate> rooms, {
     Direction? direction,
@@ -2745,6 +2794,14 @@ class Client extends MatrixApi {
       );
       final id = entry.key;
       final syncRoomUpdate = entry.value;
+
+      // Obergrenze je Raum (Fork 31.10.2026, [zeitleisteGrenze]): wie ein
+      // `limited`-Sync behandeln — vor `_updateRoomsByRoomUpdate`, damit
+      // `prev_batch`, `lastEvent`, offene Zeitleisten (`onSync`) und das
+      // Nachladen im Hintergrund genau denselben Weg nehmen.
+      if (direction == null && syncRoomUpdate is JoinedRoomUpdate) {
+        await _zeitleisteBegrenzen(id, syncRoomUpdate);
+      }
 
       final room = await _updateRoomsByRoomUpdate(id, syncRoomUpdate);
 

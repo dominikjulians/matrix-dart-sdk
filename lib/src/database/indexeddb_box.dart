@@ -153,6 +153,11 @@ class BoxCollection with ZoneTransactionMixin {
 
   Future<void> schlafen() async {}
 
+  /// Fork 31.10.2026: Gegenstück zur sqflite-Fassung; im Web gibt es keine
+  /// SQLite-Verbindung.
+  Future<void> exklusiv(Future<void> Function(Never db) aktion) =>
+      throw UnsupportedError('Keine SQLite-Verbindung im Web');
+
   void aufwachen(Object db) {}
 
   bool get istOffen => true;

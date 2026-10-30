@@ -129,6 +129,11 @@ class BoxCollection with ZoneTransactionMixin {
     await batch.commit(noResult: true);
   });
 
+  /// Fork 31.10.2026: [aktion] exklusiv auf der Verbindung (unter der
+  /// Transaktionssperre), für Wartung neben dem laufenden SDK.
+  Future<void> exklusiv(Future<void> Function(Database db) aktion) =>
+      zoneTransaction(() async => aktion(await _bereit));
+
   Future<void> clear() => transaction(() async {
     final db = await _bereit;
     for (final name in boxNames) {
