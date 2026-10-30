@@ -228,6 +228,19 @@ void main() {
         client,
       )).firstWhere((r) => r.id == _raum);
       expect(gespeichert.prev_batch, 'p2');
+
+      // „Verlauf laden“ schließt genau an den Anfang dieses Syncs an.
+      try {
+        await room.requestHistory();
+      } catch (_) {
+        // Die Attrappe kennt diesen Raum nicht — es zählt nur die Anfrage.
+      }
+      expect(
+        FakeMatrixApi.calledEndpoints.keys.where(
+          (k) => k.contains('/messages?from=p2&dir=b'),
+        ),
+        isNotEmpty,
+      );
     });
 
     test(
