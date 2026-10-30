@@ -1354,9 +1354,10 @@ class MatrixSdkDatabase extends DatabaseApi with DatabaseFileStorage {
   /// größer; nur eine übergroße Altliste (vor dem 31.10.2026 gewachsen, bis
   /// 58 450 Kennungen gemessen) würde den Sync sonst lange aufhalten — ihren
   /// Rest räumt die App im Hintergrund (Waisen, `verwaisteEreignisseLoeschen`
-  /// bzw. die Datenbank-Wache der App).
-  /// Veränderbar nur für Tests.
-  static int loeschenHoechstens = 5000;
+  /// bzw. die Datenbank-Wache der App). Gemessen am Abzug vom 30.10.2026
+  /// (Mac): 5000 Ereignisse hielten den Abgleich 4,3 s auf — deshalb so viele
+  /// wie [Client.zeitleisteGrenzeStandard]. Veränderbar nur für Tests.
+  static int loeschenHoechstens = 2000;
 
   @override
   Future<void> deleteTimelineForRoom(String roomId) async {
